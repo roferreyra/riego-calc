@@ -330,17 +330,26 @@
 
   <div class="panel">
     <h2>Temporada</h2>
-    <p class="panel-desc">Rango de fechas a calendarizar.</p>
+    <p class="panel-desc">Mes y día de inicio y término — el año se calcula solo, proyectando siempre la próxima ocurrencia de esas fechas.</p>
     <div class="grid">
       <label class="field">
         <span class="lbl">Inicio de temporada</span>
-        <input type="date" id="fechaInicio">
+        <div style="display:flex;gap:8px;">
+          <select id="inicioMes" style="flex:1.4;"></select>
+          <select id="inicioDia" style="flex:1;"></select>
+        </div>
       </label>
       <label class="field">
         <span class="lbl">Fin de temporada</span>
-        <input type="date" id="fechaFin">
+        <div style="display:flex;gap:8px;">
+          <select id="finMes" style="flex:1.4;"></select>
+          <select id="finDia" style="flex:1;"></select>
+        </div>
       </label>
     </div>
+    <p class="hint" id="temporadaPreview" style="margin-top:10px;color:var(--ink-faint);font-size:11.5px;"></p>
+    <input type="hidden" id="fechaInicio">
+    <input type="hidden" id="fechaFin">
   </div>
 
   <div class="panel">
@@ -511,8 +520,79 @@ function todayISO(offsetDays=0){
   d.setDate(d.getDate()+offsetDays);
   return d.toISOString().slice(0,10);
 }
-document.getElementById('fechaInicio').value = todayISO(0);
-document.getElementById('fechaFin').value = todayISO(180);
+
+function daysInMonthSafe(m){
+  // m is 0-indexed; use 29 for Feb to stay safe regardless of leap-year resolution
+  const lengths = [31,29,31,30,31,30,31,31,30,31,30,31];
+  return lengths[m];
+}
+
+function populateMesSelect(sel){
+  sel.innerHTML = MONTH_NAMES.map((name,i)=>`<option value="${i}">${name.charAt(0).toUpperCase()+name.slice(1)}</option>`).join('');
+}
+
+function populateDiaSelect(sel, month, keepValue){
+  const max = daysInMonthSafe(month);
+  const prev = keepValue !== undefined ? keepValue : parseInt(sel.value,10);
+  sel.innerHTML = Array.from({length:max}, (_,i)=>i+1).map(d=>`<option value="${d}">${d}</option>`).join('');
+  sel.value = (prev && prev <= max) ? prev : Math.min(prev || 1, max);
+}
+
+const inicioMesEl = document.getElementById('inicioMes');
+const inicioDiaEl = document.getElementById('inicioDia');
+const finMesEl = document.getElementById('finMes');
+const finDiaEl = document.getElementById('finDia');
+
+populateMesSelect(inicioMesEl);
+populateMesSelect(finMesEl);
+
+const todayD = new Date();
+const defaultStartMonth = todayD.getMonth();
+const defaultStartDay = todayD.getDate();
+const endD = new Date(); endD.setDate(endD.getDate()+180);
+const defaultEndMonth = endD.getMonth();
+const defaultEndDay = endD.getDate();
+
+populateDiaSelect(inicioDiaEl, defaultStartMonth, defaultStartDay);
+inicioMesEl.value = defaultStartMonth;
+populateDiaSelect(finDiaEl, defaultEndMonth, defaultEndDay);
+finMesEl.value = defaultEndMonth;
+
+function updateFechasFromSelectors(){
+  const now = new Date();
+  const now0 = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  const sm = parseInt(inicioMesEl.value,10), sd = parseInt(inicioDiaEl.value,10);
+  const em = parseInt(finMesEl.value,10), ed = parseInt(finDiaEl.value,10);
+
+  let startYear = now.getFullYear();
+  let start = new Date(startYear, sm, sd);
+  if(start < now0) { startYear += 1; start = new Date(startYear, sm, sd); }
+
+  let endYear = startYear;
+  let end = new Date(endYear, em, ed);
+  if(end < start) { endYear += 1; end = new Date(endYear, em, ed); }
+
+  const iso = d => `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
+  document.getElementById('fechaInicio').value = iso(start);
+  document.getElementById('fechaFin').value = iso(end);
+
+  const fmtLarga = d => d.toLocaleDateString('es-CL',{day:'2-digit',month:'long',year:'numeric'});
+  document.getElementById('temporadaPreview').textContent = `Período resuelto: ${fmtLarga(start)} → ${fmtLarga(end)}`;
+
+  renderMonthlyInputs();
+  recalc();
+}
+
+inicioMesEl.addEventListener('change', ()=>{
+  populateDiaSelect(inicioDiaEl, parseInt(inicioMesEl.value,10));
+  updateFechasFromSelectors();
+});
+inicioDiaEl.addEventListener('change', updateFechasFromSelectors);
+finMesEl.addEventListener('change', ()=>{
+  populateDiaSelect(finDiaEl, parseInt(finMesEl.value,10));
+  updateFechasFromSelectors();
+});
+finDiaEl.addEventListener('change', updateFechasFromSelectors);
 
 function calcPrecipitacionSistema(){
   const distEmisores = parseFloat(document.getElementById('distEmisores').value) || 0;
@@ -602,12 +682,6 @@ function renderMonthlyInputs(){
 ['areaTotal','nSectores','horasMax','eficiencia','pluviometria','retSuelo'].forEach(id=>{
   document.getElementById(id).addEventListener('input', ()=>{
     if(id==='areaTotal' || id==='nSectores') syncSectorAreas();
-    recalc();
-  });
-});
-['fechaInicio','fechaFin'].forEach(id=>{
-  document.getElementById(id).addEventListener('input', ()=>{
-    renderMonthlyInputs();
     recalc();
   });
 });
@@ -1012,7 +1086,8 @@ document.getElementById('downloadBtn').addEventListener('click', ()=>{
   if(!lastCalendarRows.length) return;
   const header = 'Fecha,Riego,Sectores en riego,Horas usadas,Caudal requerido (m3/h)\n';
   const lines = lastCalendarRows.map(row=>{
-    const dateStr = row.date.toISOString().slice(0,10);
+    const dt = row.date;
+    const dateStr = `${dt.getFullYear()}-${String(dt.getMonth()+1).padStart(2,'0')}-${String(dt.getDate()).padStart(2,'0')}`;
     return `${dateStr},${row.irriga?'Si':'No'},"${row.irriga?('Sectores '+row.sectors):''}",${row.irriga?row.horasUsadas.toFixed(2):''},${row.irriga?row.caudalDia.toFixed(1):''}`;
   }).join('\n');
   const blob = new Blob([header+lines], {type:'text/csv;charset=utf-8;'});
@@ -1025,8 +1100,7 @@ document.getElementById('downloadBtn').addEventListener('click', ()=>{
 });
 
 syncSectorAreas();
-renderMonthlyInputs();
-recalc();
+updateFechasFromSelectors();
 </script>
 </body>
 </html>
