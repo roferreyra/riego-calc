@@ -344,8 +344,37 @@
   </div>
 
   <div class="panel">
+    <h2>ETo mensual automática</h2>
+    <p class="panel-desc">Busca una ciudad de referencia cercana y completa la ETo de cada mes de la temporada con el histórico climático de Open-Meteo (reanálisis ERA5, método FAO Penman-Monteith).</p>
+    <div class="grid" style="grid-template-columns:2fr 1fr;align-items:end;">
+      <label class="field">
+        <span class="lbl">Ciudad de referencia</span>
+        <input type="text" id="ciudadInput" placeholder="Ej: Curicó, Chile">
+        <span class="hint">nombre de ciudad, de preferencia con país</span>
+      </label>
+      <button class="btn" id="buscarEtoBtn" type="button">Buscar y completar ETo</button>
+    </div>
+    <div id="etoLookupStatus" style="margin-top:12px;"></div>
+  </div>
+
+  <div class="panel">
+    <h2>Kc sugerido según cultivo</h2>
+    <p class="panel-desc">Valores de referencia del coeficiente de cultivo (Kc) según FAO-56 (Allen et al., 1998, Cuadro 12) — punto de partida a ajustar con tu manejo real (cobertura de suelo, densidad, portainjerto, zona).</p>
+    <div class="grid" style="grid-template-columns:2fr 1fr;align-items:end;">
+      <label class="field">
+        <span class="lbl">Tipo de cultivo</span>
+        <select id="cultivoSelect">
+          <option value="">Selecciona un cultivo…</option>
+        </select>
+      </label>
+      <button class="btn" id="aplicarKcBtn" type="button" disabled>Aplicar Kc a los meses</button>
+    </div>
+    <div id="kcRefCard" style="margin-top:14px;"></div>
+  </div>
+
+  <div class="panel">
     <h2>Kc y ETo por mes</h2>
-    <p class="panel-desc">Un valor de ETo y Kc para cada mes comprendido en la temporada — ajusta según boletín agroclimático y curva de cultivo.</p>
+    <p class="panel-desc">Un valor de ETo y Kc para cada mes comprendido en la temporada — ajusta según boletín agroclimático y curva de cultivo, o complétalo con los buscadores de arriba.</p>
     <div class="table-scroll">
       <table id="monthlyInputTable">
         <thead><tr><th>Mes</th><th>ETo (mm/día)</th><th>Kc</th></tr></thead>
@@ -583,6 +612,151 @@ function renderMonthlyInputs(){
   });
 });
 document.querySelectorAll('input[name=modo]').forEach(r=> r.addEventListener('change', recalc));
+
+const MONTH_KEYS_EN = ['JAN','FEB','MAR','APR','MAY','JUN','JUL','AUG','SEP','OCT','NOV','DEC'];
+
+async function buscarEtoMensual(){
+  const ciudad = document.getElementById('ciudadInput').value.trim();
+  const statusEl = document.getElementById('etoLookupStatus');
+  const btn = document.getElementById('buscarEtoBtn');
+  if(!ciudad){
+    statusEl.innerHTML = `<div class="warning">Escribe una ciudad de referencia antes de buscar.</div>`;
+    return;
+  }
+  btn.disabled = true;
+  statusEl.innerHTML = `<div class="ok-note">Buscando "${ciudad}"…</div>`;
+
+  try{
+    const geoRes = await fetch(`https://geocoding-api.open-meteo.com/v1/search?name=${encodeURIComponent(ciudad)}&count=1&language=es&format=json`);
+    const geoData = await geoRes.json();
+    if(!geoData.results || !geoData.results.length){
+      statusEl.innerHTML = `<div class="warning">No se encontró "${ciudad}". Prueba con el nombre de la ciudad más cercana y su país (ej: "Curicó, Chile").</div>`;
+      btn.disabled = false;
+      return;
+    }
+    const loc = geoData.results[0];
+    statusEl.innerHTML = `<div class="ok-note">Ciudad encontrada: ${loc.name}${loc.admin1 ? ', '+loc.admin1 : ''}, ${loc.country} (${fmt(loc.latitude,2)}, ${fmt(loc.longitude,2)}). Consultando histórico climático (esto puede tardar unos segundos)…</div>`;
+
+    const startYear = 2015, endYear = 2024;
+    const archiveUrl = `https://archive-api.open-meteo.com/v1/archive?latitude=${loc.latitude}&longitude=${loc.longitude}&start_date=${startYear}-01-01&end_date=${endYear}-12-31&daily=et0_fao_evapotranspiration&timezone=auto`;
+    const archiveRes = await fetch(archiveUrl);
+    if(!archiveRes.ok) throw new Error('archive_http_'+archiveRes.status);
+    const archiveData = await archiveRes.json();
+    const times = archiveData?.daily?.time;
+    const vals = archiveData?.daily?.et0_fao_evapotranspiration;
+    if(!times || !vals || !times.length){
+      statusEl.innerHTML = `<div class="warning">Se encontró la ciudad, pero el servicio histórico no devolvió datos de ETo para ese punto. Puedes ingresar los valores manualmente.</div>`;
+      btn.disabled = false;
+      return;
+    }
+
+    const sums = Array(12).fill(0);
+    const counts = Array(12).fill(0);
+    for(let i=0;i<times.length;i++){
+      const v = vals[i];
+      if(v === null || v === undefined) continue;
+      const m = parseInt(times[i].slice(5,7),10) - 1;
+      sums[m] += v;
+      counts[m]++;
+    }
+    const monthlyAvg = sums.map((s,i)=> counts[i] > 0 ? s/counts[i] : null);
+
+    const months = getMonthsInSeason();
+    months.forEach(mo=>{
+      const val = monthlyAvg[mo.m];
+      if(typeof val === 'number' && isFinite(val)){
+        if(!monthlyData[mo.key]) monthlyData[mo.key] = {eto:5.0, kc:0.8};
+        monthlyData[mo.key].eto = Math.round(val*100)/100;
+      }
+    });
+    renderMonthlyInputs();
+    recalc();
+
+    statusEl.innerHTML = `<div class="ok-note">ETo completada para ${loc.name}${loc.admin1 ? ', '+loc.admin1 : ''}, ${loc.country}, usando el promedio diario histórico ${startYear}-${endYear} de Open-Meteo (reanálisis ERA5, FAO Penman-Monteith). Revisa la tabla de abajo — puedes sobrescribir cualquier ETo manualmente si tienes datos locales mejores.</div>`;
+  } catch(err){
+    statusEl.innerHTML = `<div class="warning">No se pudo consultar el servicio histórico en este momento (${err.message || 'error de red'}). Puedes ingresar los valores de ETo manualmente en la tabla de abajo, o intentar de nuevo más tarde.</div>`;
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+document.getElementById('buscarEtoBtn').addEventListener('click', buscarEtoMensual);
+
+const CROP_KC_TABLE = {
+  almendro:   {label:'Almendro (sin cobertura de suelo)', kcIni:0.40, kcMid:0.90, kcEnd:0.65, deciduous:true,  source:'FAO-56, Cuadro 12 (Allen et al., 1998)'},
+  nogal:      {label:'Nogal (con cobertura activa)',       kcIni:0.50, kcMid:1.10, kcEnd:0.65, deciduous:true,  source:'FAO-56, Cuadro 12 (Allen et al., 1998)'},
+  manzano:    {label:'Manzano / Peral (sin cobertura)',    kcIni:0.45, kcMid:0.95, kcEnd:0.70, deciduous:true,  source:'FAO-56, Cuadro 12 (Allen et al., 1998)'},
+  cerezo:     {label:'Cerezo (sin cobertura)',             kcIni:0.45, kcMid:0.95, kcEnd:0.70, deciduous:true,  source:'FAO-56, Cuadro 12 (Allen et al., 1998)'},
+  carozo:     {label:'Durazno / Nectarín / Ciruelo / Damasco (carozo, sin cobertura)', kcIni:0.55, kcMid:0.90, kcEnd:0.65, deciduous:true, source:'FAO-56, Cuadro 12 (Allen et al., 1998)'},
+  vidmesa:    {label:'Vid de mesa',                        kcIni:0.30, kcMid:0.85, kcEnd:0.45, deciduous:true,  source:'FAO-56, Cuadro 12 (Allen et al., 1998)'},
+  vidvino:    {label:'Vid vinífera',                       kcIni:0.30, kcMid:0.70, kcEnd:0.45, deciduous:true,  source:'FAO-56, Cuadro 12 (Allen et al., 1998)'},
+  kiwi:       {label:'Kiwi',                                kcIni:0.40, kcMid:1.05, kcEnd:1.05, deciduous:true,  source:'FAO-56, Cuadro 12 (Allen et al., 1998)'},
+  olivo:      {label:'Olivo (40-60% cobertura de copa)',   kcIni:0.65, kcMid:0.70, kcEnd:0.65, deciduous:false, source:'FAO-56, Cuadro 12 (Allen et al., 1998)'},
+  citricos:   {label:'Cítricos: naranjo, mandarino, limón (70% cobertura)', kcIni:0.70, kcMid:0.65, kcEnd:0.70, deciduous:false, source:'FAO-56, Cuadro 12 (Allen et al., 1998)'},
+  palto:      {label:'Palto / Aguacate',                   kcIni:0.60, kcMid:0.70, kcEnd:0.65, deciduous:false, source:'Referencia regional — no está en FAO-56, verifica localmente'},
+  arandano:   {label:'Arándano (hedgerow adulto)',         kcIni:0.30, kcMid:0.90, kcEnd:0.40, deciduous:true,  source:'Referencia regional — no está en FAO-56, verifica localmente'},
+};
+
+const cultivoSelect = document.getElementById('cultivoSelect');
+Object.keys(CROP_KC_TABLE).forEach(key=>{
+  const opt = document.createElement('option');
+  opt.value = key;
+  opt.textContent = CROP_KC_TABLE[key].label;
+  cultivoSelect.appendChild(opt);
+});
+
+cultivoSelect.addEventListener('change', renderKcRefCard);
+
+function renderKcRefCard(){
+  const key = cultivoSelect.value;
+  const card = document.getElementById('kcRefCard');
+  const btn = document.getElementById('aplicarKcBtn');
+  if(!key){
+    card.innerHTML = '';
+    btn.disabled = true;
+    return;
+  }
+  const c = CROP_KC_TABLE[key];
+  card.innerHTML = `
+    <div class="kpi-grid">
+      <div class="kpi"><div class="k-label">Kc inicial</div><div class="k-value">${fmt(c.kcIni,2)}</div></div>
+      <div class="kpi teal"><div class="k-label">Kc mediados (peak)</div><div class="k-value">${fmt(c.kcMid,2)}</div></div>
+      <div class="kpi"><div class="k-label">Kc final</div><div class="k-value">${fmt(c.kcEnd,2)}</div></div>
+    </div>
+    <p class="hint" style="margin-top:10px;color:var(--ink-faint);font-size:11.5px;">Fuente: ${c.source}. ${c.deciduous ? 'Especie de hoja caduca — la curva sigue el ciclo brotación → pleno desarrollo → cosecha/reposo.' : 'Especie de hoja perenne — el Kc se mantiene relativamente estable todo el año.'}</p>
+  `;
+  btn.disabled = false;
+}
+
+document.getElementById('aplicarKcBtn').addEventListener('click', ()=>{
+  const key = cultivoSelect.value;
+  if(!key) return;
+  const c = CROP_KC_TABLE[key];
+  const months = getMonthsInSeason();
+  const n = months.length;
+  if(!n) return;
+
+  months.forEach((mo, i)=>{
+    let kc;
+    if(!c.deciduous){
+      kc = c.kcMid;
+    } else if(n === 1){
+      kc = c.kcMid;
+    } else {
+      const frac = i / (n - 1);
+      if(frac <= 0.25) kc = c.kcIni + (c.kcMid - c.kcIni) * (frac / 0.25);
+      else if(frac >= 0.75) kc = c.kcMid + (c.kcEnd - c.kcMid) * ((frac - 0.75) / 0.25);
+      else kc = c.kcMid;
+    }
+    if(!monthlyData[mo.key]) monthlyData[mo.key] = {eto:5.0, kc:0.8};
+    monthlyData[mo.key].kc = Math.round(kc*100)/100;
+  });
+  renderMonthlyInputs();
+  recalc();
+
+  const card = document.getElementById('kcRefCard');
+  card.innerHTML += `<div class="ok-note" style="margin-top:10px;">Kc aplicado a los ${n} meses de la temporada usando una curva ${c.deciduous ? 'inicial → desarrollo → mediados → final (25%/25%/25%/25% de la temporada)' : 'plana (especie de hoja perenne)'}. Revisa la tabla de abajo — si conoces tus fechas reales de brotación, plena flor o cosecha, ajusta los meses correspondientes a mano.</div>`;
+});
 
 let lastResult = null;
 
