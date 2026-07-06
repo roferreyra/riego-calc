@@ -266,9 +266,6 @@
       <div class="kpi teal"><div class="k-label">Precipitación calculada</div><div class="k-value" id="pluvCalculadaValue">—<span class="k-unit">mm/h</span></div></div>
       <div class="kpi"><div class="k-label">Área servida por emisor</div><div class="k-value" id="areaEmisorValue">—<span class="k-unit">m²</span></div></div>
     </div>
-    <div class="actions">
-      <button class="btn" id="usarPluvBtn" type="button">Usar este valor en "Precipitación del sistema"</button>
-    </div>
   </div>
 
   <div class="panel">
@@ -650,18 +647,14 @@ function calcPrecipitacionSistema(){
   const pluv = caudalEmisor / areaPorEmisor;
   valueEl.innerHTML = `${fmt(pluv,2)}<span class="k-unit">mm/h</span>`;
   areaEl.innerHTML = `${fmt(areaPorEmisor,2)}<span class="k-unit">m²</span>`;
+
+  document.getElementById('pluviometria').value = pluv.toFixed(2);
+  recalc();
   return pluv;
 }
 
 ['distEmisores','nLineas','caudalEmisor','distHileras'].forEach(id=>{
   document.getElementById(id).addEventListener('input', calcPrecipitacionSistema);
-});
-document.getElementById('usarPluvBtn').addEventListener('click', ()=>{
-  const pluv = calcPrecipitacionSistema();
-  if(pluv !== null){
-    document.getElementById('pluviometria').value = pluv.toFixed(2);
-    recalc();
-  }
 });
 calcPrecipitacionSistema();
 
