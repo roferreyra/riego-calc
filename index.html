@@ -496,7 +496,10 @@ let lastNSectores = null;
 let monthlyData = {};
 
 function syncSectorAreas(){
-  const n = Math.max(1, Math.min(24, parseInt(document.getElementById('nSectores').value) || 1));
+  const rawValue = document.getElementById('nSectores').value;
+  const parsed = parseInt(rawValue, 10);
+  if(isNaN(parsed)) return;
+  const n = Math.max(1, Math.min(24, parsed));
   const areaTotal = parseFloat(document.getElementById('areaTotal').value) || 0;
   if(n !== lastNSectores){
     sectorAreas = Array.from({length:n}, () => areaTotal / n);
@@ -710,10 +713,12 @@ function renderMonthlyInputs(){
 }
 
 ['areaTotal','nSectores','horasMax','eficiencia','pluviometria'].forEach(id=>{
-  document.getElementById(id).addEventListener('input', ()=>{
+  const handler = ()=>{
     if(id==='areaTotal' || id==='nSectores') syncSectorAreas();
     recalc();
-  });
+  };
+  document.getElementById(id).addEventListener('input', handler);
+  document.getElementById(id).addEventListener('change', handler);
 });
 
 const SOIL_TEXTURE_TABLE = {
