@@ -290,18 +290,6 @@
         <input type="number" id="horasMax" value="20" min="1" max="24" step="0.5">
         <span class="hint">horas / día disponibles</span>
       </label>
-      <label class="field">
-        <span class="lbl">Modo de operación</span>
-        <div class="radio-row" id="modoRow">
-          <label class="radio-opt active" id="optSecuencial">
-            <input type="radio" name="modo" value="secuencial" checked> Secuencial
-          </label>
-          <label class="radio-opt" id="optSimultaneo">
-            <input type="radio" name="modo" value="simultaneo"> Simultáneo
-          </label>
-        </div>
-        <span class="hint">secuencial: un sector a la vez</span>
-      </label>
     </div>
     <div id="sectorTableWrap" style="margin-top:16px;"></div>
   </div>
@@ -320,13 +308,57 @@
         <input type="number" id="pluviometria" value="2.5" min="0.1" step="0.1">
         <span class="hint">mm/h (aforo del equipo)</span>
       </label>
-      <label class="field">
-        <span class="lbl">Retención de agua del suelo</span>
-        <input type="number" id="retSuelo" value="30" min="1" step="1">
-        <span class="hint">mm aprovechables en la zona de raíces</span>
-      </label>
     </div>
   </div>
+
+  <div class="panel">
+    <h2>Retención de agua del suelo</h2>
+    <p class="panel-desc">Se estima a partir de la clase textural (capacidad de campo y punto de marchitez típicos), la profundidad radicular, el umbral de riego, el % de suelo mojado por el sistema y la pedregosidad — valores orientativos; ajusta con análisis de suelo local si lo tienes.</p>
+    <div class="grid">
+      <label class="field">
+        <span class="lbl">Clase textural</span>
+        <select id="claseTextural"></select>
+      </label>
+      <label class="field">
+        <span class="lbl">Profundidad de suelo / raíces</span>
+        <input type="number" id="profundidadSuelo" value="60" min="5" step="5">
+        <span class="hint">cm</span>
+      </label>
+      <label class="field">
+        <span class="lbl">Umbral de riego</span>
+        <input type="number" id="umbralRiego" value="30" min="5" max="90" step="5">
+        <span class="hint">% de agotamiento del agua aprovechable total</span>
+      </label>
+      <label class="field">
+        <span class="lbl">Tipo de sistema (preset % mojado)</span>
+        <select id="tipoSistemaMojado">
+          <option value="30">Goteo (30%)</option>
+          <option value="60">Microaspersión (60%)</option>
+          <option value="100">Cobertura total / aspersión (100%)</option>
+          <option value="custom">Personalizado…</option>
+        </select>
+      </label>
+      <label class="field">
+        <span class="lbl">% de suelo mojado</span>
+        <input type="number" id="pctMojado" value="30" min="1" max="100" step="1">
+        <span class="hint">fracción del suelo humedecida por el sistema</span>
+      </label>
+      <label class="field">
+        <span class="lbl">% pedregosidad</span>
+        <input type="number" id="pctPedregosidad" value="0" min="0" max="90" step="5">
+        <span class="hint">fracción del suelo ocupada por piedras/gravas</span>
+      </label>
+    </div>
+    <div class="kpi-grid" style="margin-top:14px;">
+      <div class="kpi"><div class="k-label">Capacidad de campo</div><div class="k-value" id="ccValue">—<span class="k-unit">%</span></div></div>
+      <div class="kpi"><div class="k-label">Punto de marchitez</div><div class="k-value" id="pmpValue">—<span class="k-unit">%</span></div></div>
+      <div class="kpi"><div class="k-label">Agua total aprovechable</div><div class="k-value" id="tawValue">—<span class="k-unit">mm</span></div></div>
+      <div class="kpi"><div class="k-label">Agua fácilmente aprovechable (100% suelo mojado, con pedregosidad)</div><div class="k-value" id="rawValue">—<span class="k-unit">mm</span></div></div>
+      <div class="kpi teal"><div class="k-label">Agua fácilmente aprovechable (ajustada por % mojado)</div><div class="k-value" id="rawEfectivoValue">—<span class="k-unit">mm</span></div></div>
+    </div>
+    <input type="hidden" id="retSuelo" value="30">
+  </div>
+
 
   <div class="panel">
     <h2>Temporada</h2>
@@ -393,12 +425,12 @@
   </div>
 
   <div class="panel">
-    <h2>Evaluación de diseño — mes de máxima demanda</h2>
+    <h2>Evaluación capacidad sistema de riego, mes máxima demanda</h2>
     <p class="panel-desc">¿Alcanzan tus horas de operación, N.° de sectores y precipitación del equipo para sostener el mes más exigente de la temporada?</p>
     <div id="evalBanner"></div>
     <div class="table-scroll" style="margin-top:14px;">
       <table id="evalTable">
-        <thead><tr><th></th><th>Actual</th><th>Necesario para el mes pico</th></tr></thead>
+        <thead><tr><th></th><th>Valor</th></tr></thead>
         <tbody id="evalBody"></tbody>
       </table>
     </div>
@@ -460,7 +492,7 @@ function fmt(n, d=1){
   if(!isFinite(n)) return '—';
   return n.toLocaleString('es-CL',{minimumFractionDigits:d,maximumFractionDigits:d});
 }
-function getModo(){ return document.querySelector('input[name=modo]:checked').value; }
+function getModo(){ return 'secuencial'; }
 
 let sectorAreas = [];
 let lastNSectores = null;
@@ -488,14 +520,15 @@ function renderSectorTable(){
     <tr>
       <td><span class="chip" style="background:${SECTOR_COLORS[i%SECTOR_COLORS.length]}"><span class="chip-dot"></span>Sector ${i+1}</span></td>
       <td><input type="number" min="0" step="0.1" value="${a.toFixed(2)}" data-idx="${i}" class="sectorAreaInput" style="max-width:110px;"></td>
+      <td id="sectorFlow-${i}">—</td>
     </tr>
   `).join('');
   wrap.innerHTML = `
     <table>
-      <thead><tr><th>Sector</th><th>Superficie (ha)</th></tr></thead>
+      <thead><tr><th>Sector</th><th>Superficie (ha)</th><th>Caudal del sector</th></tr></thead>
       <tbody>${rows}</tbody>
     </table>
-    <p class="hint" style="margin-top:8px;color:var(--ink-faint);font-size:11.5px;">Por defecto la superficie se reparte en partes iguales — ajusta cada sector si son de distinto tamaño.</p>
+    <p class="hint" style="margin-top:8px;color:var(--ink-faint);font-size:11.5px;">Por defecto la superficie se reparte en partes iguales — ajusta cada sector si son de distinto tamaño. El caudal se calcula con la precipitación del sistema.</p>
   `;
   wrap.querySelectorAll('.sectorAreaInput').forEach(inp=>{
     inp.addEventListener('input', e=>{
@@ -504,16 +537,21 @@ function renderSectorTable(){
       recalc();
     });
   });
+  updateSectorFlows();
 }
 
-document.getElementById('optSecuencial').addEventListener('click', ()=>{
-  document.getElementById('optSecuencial').classList.add('active');
-  document.getElementById('optSimultaneo').classList.remove('active');
-});
-document.getElementById('optSimultaneo').addEventListener('click', ()=>{
-  document.getElementById('optSimultaneo').classList.add('active');
-  document.getElementById('optSecuencial').classList.remove('active');
-});
+function updateSectorFlows(){
+  const pluvEl = document.getElementById('pluviometria');
+  if(!pluvEl) return;
+  const pluv = parseFloat(pluvEl.value) || 0;
+  sectorAreas.forEach((ha,i)=>{
+    const cell = document.getElementById(`sectorFlow-${i}`);
+    if(!cell) return;
+    const m3h = (ha*10000) * pluv / 1000;
+    const ls = m3h / 3.6;
+    cell.textContent = `${fmt(m3h,1)} m³/h (${fmt(ls,2)} L/s)`;
+  });
+}
 
 function todayISO(offsetDays=0){
   const d = new Date();
@@ -679,13 +717,72 @@ function renderMonthlyInputs(){
   return months;
 }
 
-['areaTotal','nSectores','horasMax','eficiencia','pluviometria','retSuelo'].forEach(id=>{
+['areaTotal','nSectores','horasMax','eficiencia','pluviometria'].forEach(id=>{
   document.getElementById(id).addEventListener('input', ()=>{
     if(id==='areaTotal' || id==='nSectores') syncSectorAreas();
     recalc();
   });
 });
-document.querySelectorAll('input[name=modo]').forEach(r=> r.addEventListener('change', recalc));
+
+const SOIL_TEXTURE_TABLE = {
+  arenoso:            {label:'Arenoso',                     cc:10, pmp:4},
+  arenoso_franco:     {label:'Arenoso franco',               cc:15, pmp:6},
+  franco_arenoso:     {label:'Franco arenoso',               cc:21, pmp:9},
+  franco:             {label:'Franco',                       cc:27, pmp:12},
+  franco_limoso:      {label:'Franco limoso',                cc:31, pmp:14},
+  limoso:             {label:'Limoso',                       cc:32, pmp:15},
+  franco_arcillo_arenoso: {label:'Franco arcillo arenoso',   cc:30, pmp:17},
+  franco_arcilloso:   {label:'Franco arcilloso',             cc:34, pmp:20},
+  franco_arcillo_limoso:  {label:'Franco arcillo limoso',    cc:36, pmp:22},
+  arcillo_arenoso:    {label:'Arcillo arenoso',               cc:34, pmp:22},
+  arcillo_limoso:     {label:'Arcillo limoso',                cc:37, pmp:24},
+  arcilloso:          {label:'Arcilloso',                     cc:40, pmp:25},
+};
+
+const claseTexturalEl = document.getElementById('claseTextural');
+Object.keys(SOIL_TEXTURE_TABLE).forEach(key=>{
+  const opt = document.createElement('option');
+  opt.value = key;
+  opt.textContent = SOIL_TEXTURE_TABLE[key].label;
+  claseTexturalEl.appendChild(opt);
+});
+claseTexturalEl.value = 'franco';
+
+function calcRetencionSuelo(){
+  const key = claseTexturalEl.value;
+  const t = SOIL_TEXTURE_TABLE[key];
+  const profundidad = parseFloat(document.getElementById('profundidadSuelo').value) || 0;
+  const umbral = parseFloat(document.getElementById('umbralRiego').value) || 0;
+  const pctMojado = parseFloat(document.getElementById('pctMojado').value) || 0;
+  const pedregosidad = parseFloat(document.getElementById('pctPedregosidad').value) || 0;
+
+  const taw = (t.cc - t.pmp) / 100 * profundidad * 10;
+  const rawTeorica = taw * (umbral / 100);
+  const raw = rawTeorica * ((100 - pedregosidad) / 100);
+  const rawEfectivo = raw * (pctMojado / 100);
+
+  document.getElementById('ccValue').innerHTML = `${fmt(t.cc,0)}<span class="k-unit">%</span>`;
+  document.getElementById('pmpValue').innerHTML = `${fmt(t.pmp,0)}<span class="k-unit">%</span>`;
+  document.getElementById('tawValue').innerHTML = `${fmt(taw,0)}<span class="k-unit">mm</span>`;
+  document.getElementById('rawValue').innerHTML = `${fmt(raw,0)}<span class="k-unit">mm</span>`;
+  document.getElementById('rawEfectivoValue').innerHTML = `${fmt(rawEfectivo,0)}<span class="k-unit">mm</span>`;
+
+  document.getElementById('retSuelo').value = rawEfectivo > 0 ? rawEfectivo : 1;
+  recalc();
+}
+
+document.getElementById('tipoSistemaMojado').addEventListener('change', (e)=>{
+  const val = e.target.value;
+  if(val !== 'custom'){
+    document.getElementById('pctMojado').value = val;
+    calcRetencionSuelo();
+  }
+});
+
+['claseTextural','profundidadSuelo','umbralRiego','pctMojado','pctPedregosidad'].forEach(id=>{
+  document.getElementById(id).addEventListener('input', calcRetencionSuelo);
+  document.getElementById(id).addEventListener('change', calcRetencionSuelo);
+});
 
 const MONTH_KEYS_EN = ['JAN','FEB','MAR','APR','MAY','JUN','JUL','AUG','SEP','OCT','NOV','DEC'];
 
@@ -888,7 +985,7 @@ function recalc(){
   const volumenTotalHa = monthParams.reduce((a,m)=>a+m.volumenMensual,0);
   const volumenTotalCampo = volumenTotalHa * areaTotal;
 
-  const evaluation = computeEvaluation(monthParams, {eficiencia, pluv, horasMax, modo, n, sectorAreas: sectorAreas.map(ha=>ha*10000)});
+  const evaluation = computeEvaluation(monthParams, {eficiencia, pluv, horasMax, n, areaTotal, caudalDiseñoM3h, caudalDiseñoLs});
 
   lastResult = {areaTotal, horasMax, eficiencia, pluv, retSuelo, modo, n,
     caudalSectorM3h, caudalDiseñoM3h, caudalDiseñoLs,
@@ -899,29 +996,25 @@ function recalc(){
   renderMonthlySummary();
   renderTotals();
   renderCalendar();
+  updateSectorFlows();
 }
 
 function computeEvaluation(monthParams, common){
   if(!monthParams.length) return null;
-  const {eficiencia, horasMax, modo, sectorAreas} = common;
+  const {eficiencia, pluv, horasMax, n, areaTotal, caudalDiseñoM3h, caudalDiseñoLs} = common;
   const peak = monthParams.reduce((a,b)=> b.etcDia > a.etcDia ? b : a);
-  const n = sectorAreas.length;
-  const maxSectorArea = Math.max(...sectorAreas, 0);
-  const sumSectorArea = sectorAreas.reduce((a,b)=>a+b,0);
 
-  let pluvNecesaria;
-  if(modo === 'secuencial'){
-    pluvNecesaria = (horasMax * peak.frecuencia) > 0 ? (peak.laminaBruta * n) / (horasMax * peak.frecuencia) : Infinity;
-  } else {
-    pluvNecesaria = horasMax > 0 ? peak.laminaBruta / horasMax : Infinity;
-  }
+  const demandaDiariaPico = eficiencia > 0 ? peak.etcDia / eficiencia : Infinity;
+  const capacidadMaximaSistema = n > 0 ? (pluv * horasMax) / n : 0;
+  const suficiente = capacidadMaximaSistema >= demandaDiariaPico;
 
-  const caudalNecesarioM3h = modo === 'secuencial'
-    ? maxSectorArea * pluvNecesaria / 1000
-    : sumSectorArea * pluvNecesaria / 1000;
-  const caudalNecesarioLs = caudalNecesarioM3h / 3.6;
+  const volumenDiarioPico = demandaDiariaPico * areaTotal * 10000 / 1000;
+  const caudalContinuoM3h = volumenDiarioPico / 24;
+  const caudalContinuoLs = caudalContinuoM3h / 3.6;
 
-  return {peak, pluvNecesaria, caudalNecesarioM3h, caudalNecesarioLs, suficiente: peak.factible};
+  return {peak, demandaDiariaPico, capacidadMaximaSistema, suficiente,
+    caudalInstantaneoM3h: caudalDiseñoM3h, caudalInstantaneoLs: caudalDiseñoLs,
+    caudalContinuoM3h, caudalContinuoLs};
 }
 
 function renderEvaluation(){
@@ -932,32 +1025,39 @@ function renderEvaluation(){
   const note = document.getElementById('evalNote');
   if(!ev){
     banner.innerHTML = '';
-    body.innerHTML = `<tr><td colspan="3">Sin meses en el rango de temporada.</td></tr>`;
+    body.innerHTML = `<tr><td colspan="2">Sin meses en el rango de temporada.</td></tr>`;
     note.textContent = '';
     return;
   }
 
   banner.innerHTML = ev.suficiente
-    ? `<div class="ok-note">Suficiente — en ${ev.peak.label} (mes de máxima demanda), tu configuración actual alcanza a regar todos los sectores dentro de la frecuencia que exige el suelo.</div>`
-    : `<div class="warning">Insuficiente — en ${ev.peak.label} (mes de máxima demanda), tu configuración actual no alcanza a regar todos los sectores a tiempo. Necesitas aumentar la precipitación del equipo, el caudal disponible, las horas de operación o reducir el número de sectores simultáneos.</div>`;
-
-  const pluvOk = r.pluv >= ev.pluvNecesaria;
-  const caudalOk = r.caudalDiseñoM3h >= ev.caudalNecesarioM3h;
+    ? `<div class="ok-note">Suficiente — en ${ev.peak.label} (mes de máxima demanda), la capacidad máxima de tu sistema alcanza a cubrir la demanda diaria del cultivo.</div>`
+    : `<div class="warning">Deficiente — en ${ev.peak.label} (mes de máxima demanda), la capacidad máxima de tu sistema no alcanza a cubrir la demanda diaria del cultivo. Necesitas aumentar la precipitación del equipo, las horas de operación, o reducir el número de sectores.</div>`;
 
   body.innerHTML = `
     <tr>
-      <td>Precipitación del sistema</td>
+      <td>Precipitación del sistema de riego</td>
       <td>${fmt(r.pluv,2)} mm/h</td>
-      <td style="color:${pluvOk ? 'var(--teal-ink)' : 'var(--clay-ink)'};font-weight:500;">${fmt(ev.pluvNecesaria,2)} mm/h ${pluvOk ? '✓' : '⚠'}</td>
     </tr>
     <tr>
-      <td>Caudal instantáneo</td>
-      <td>${fmt(r.caudalDiseñoM3h,1)} m³/h (${fmt(r.caudalDiseñoLs,2)} L/s)</td>
-      <td style="color:${caudalOk ? 'var(--teal-ink)' : 'var(--clay-ink)'};font-weight:500;">${fmt(ev.caudalNecesarioM3h,1)} m³/h (${fmt(ev.caudalNecesarioLs,2)} L/s) ${caudalOk ? '✓' : '⚠'}</td>
+      <td>Demanda diaria del mes máximo</td>
+      <td>${fmt(ev.demandaDiariaPico,2)} mm/día</td>
+    </tr>
+    <tr>
+      <td>Capacidad máxima del sistema</td>
+      <td style="color:${ev.suficiente ? 'var(--teal-ink)' : 'var(--clay-ink)'};font-weight:500;">${fmt(ev.capacidadMaximaSistema,2)} mm/día ${ev.suficiente ? '✓' : '⚠'}</td>
+    </tr>
+    <tr>
+      <td>Caudal instantáneo requerido</td>
+      <td>${fmt(ev.caudalInstantaneoM3h,1)} m³/h (${fmt(ev.caudalInstantaneoLs,2)} L/s)</td>
+    </tr>
+    <tr>
+      <td>Caudal continuo requerido</td>
+      <td>${fmt(ev.caudalContinuoM3h,1)} m³/h (${fmt(ev.caudalContinuoLs,2)} L/s)</td>
     </tr>
   `;
 
-  note.textContent = `Cálculo para ${ev.peak.label}: lámina bruta ${fmt(ev.peak.laminaBruta,1)} mm cada ${ev.peak.frecuencia} día(s), repartida entre ${r.n} sectores en modo ${r.modo === 'secuencial' ? 'secuencial' : 'simultáneo'} dentro de ${fmt(r.horasMax,1)} h/día disponibles.`;
+  note.textContent = `Cálculo para ${ev.peak.label}: capacidad máxima = precipitación del sistema (${fmt(r.pluv,2)} mm/h) × horas máx. de operación (${fmt(r.horasMax,1)} h) / ${r.n} sectores, repartida secuencialmente entre todos ellos en un mismo día. Caudal instantáneo: el que exige el sector más grande mientras riega. Caudal continuo: el volumen diario total del mes pico repartido en 24 h — referencia útil para dimensionar fuente o derecho de agua continuo.`;
 }
 
 function renderFlowKPI(){
@@ -1100,6 +1200,7 @@ document.getElementById('downloadBtn').addEventListener('click', ()=>{
 });
 
 syncSectorAreas();
+calcRetencionSuelo();
 updateFechasFromSelectors();
 </script>
 </body>
